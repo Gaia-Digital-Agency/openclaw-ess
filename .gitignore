@@ -1,0 +1,27 @@
+# Secrets & Credentials
+credentials/
+identity/
+devices/
+**/auth-profiles.json
+openclaw.json
+.env.google-drive
+**/.env.google-drive
+
+# Runtime Data, Logs & State
+browser/
+logs/
+media/
+memory/
+agents/**/sessions/
+subagents/runs.json
+update-check.json
+
+# Backups
+*.bak*
+
+# Local Runtime State
+canvas/id.txt
+flows/
+tasks/
+venv/
+workspace_bak/
