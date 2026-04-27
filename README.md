@@ -178,11 +178,39 @@ Each of the 64 cells also has a **hero ad slot** (placeholder: "Ads space > Cang
 
 ---
 
-## Wiring to Essential Bali (Phase D and beyond)
+## Wiring to Essential Bali (Phase D foundation deployed)
 
 - **Payload base URL:** `http://gda-s01.asia-southeast1-b.c.gda-viceroy.internal:4008` (internal GCP network)
-- **API key env var:** `PAYLOAD_AI_API_KEY` (loaded into `credentials/`)
+- **API key env var:** `PAYLOAD_AI_API_KEY` — generated at provisioning, stored in `cms/.env` on gda-s01 and mirrored into `credentials/` here
 - **Site base URL** (used in copy & links): `https://essentialbali.gaiada.online`
+- **Collections available** (Payload REST):
+  - `GET /api/areas` — 8 fixed
+  - `GET /api/topics` — 8 fixed
+  - `GET /api/personas` — Maya, Komang, Putu, Sari (seeded)
+  - `POST /api/articles` — submit drafts as `status=pending_review`
+  - `POST /api/media` — multipart upload (Imager uses this)
+  - `POST /api/comments` — agent-authored or human
+  - `GET/PATCH /api/hero-ads` — 64 placeholder slots; toggle `active` to flip from placeholder to creative
+- **GraphQL playground:** `http://gda-s01:4008/api/graphql-playground`
+
+### Web Manager → Payload contract example
+
+```bash
+curl -X POST http://gda-s01:4008/api/articles \
+  -H "Authorization: users API-Key $PAYLOAD_AI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title":"Where the Surf Meets Brunch in Canggu",
+    "slug":"where-surf-meets-brunch-canggu",
+    "area": <area_id>,
+    "topic": <topic_id>,
+    "persona": <persona_id>,
+    "status":"pending_review",
+    "body": { "root": { ... lexical ... } },
+    "seo": { "metaTitle":"...", "metaDescription":"..." },
+    "source": { "url":"...", "site":"thehoneycombers.com", "hash":"sha256:..." }
+  }'
+```
 
 ---
 
