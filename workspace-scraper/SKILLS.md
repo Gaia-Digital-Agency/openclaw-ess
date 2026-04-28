@@ -13,6 +13,15 @@
 - **read-inbox-xlsx(path?, status?, month?)** — read the article tracker xlsx
   from `/opt/.openclaw-ess/inbox/articles/*.xlsx`, return JSON list of rows
   ready for Copywriter / Web Manager to ingest.
+- **pull-xlsx-from-drive(name?)** — download the article tracker xlsx from
+  Google Drive (auto-exports Google Sheets to xlsx). Replaces the local rsync
+  bridge once the operator's local copy goes away. Uses the same OAuth token
+  as the Doc reader (`ai@gaiada.com`).
+- **read-google-doc(url)** — fetch a Google Doc body as Markdown. Auth: user
+  OAuth. Doc must be shared with `ai@gaiada.com`.
+- **check-doc-access()** — for each Draft Link in the inbox xlsx, report
+  whether `ai@gaiada.com` can read it; output an actionable list of docs to
+  share.
 
 ## Implementation
 
