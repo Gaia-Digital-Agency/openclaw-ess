@@ -6,7 +6,8 @@
   - Invoker: `node /opt/.openclaw-ess/workspace-imager/scripts/generate-hero.mjs`
   - Backend: Vertex AI Imagen 3 (`imagen-3.0-generate-002`).
 - **generate-inline(article, n)** — produce N inline supporting images (1:1, 1024×1024). **LIVE** (`--inline=N`, max 4).
-- **regenerate(article, feedback)** — *scaffolded.* Re-call generate-hero with extra `--negative` and adjusted summary.
+- **regenerate(article, feedback)** — **LIVE.** Wrapper around generate-hero with feedback-augmented prompt + smart negative-prompt mapping (e.g. "no people" → adds people/faces/humans to negative). Auto-uploads new PNG to GCS via /api/media. Returns both old and new media ids so the caller (or human) can PATCH article.hero to swap.
+  Invoker: `node /opt/.openclaw-ess/workspace-imager/scripts/regenerate.mjs --id=N --feedback="..."`
 - **alt-text(image, article)** — auto-generated per file (`{title} — {area} {topic} editorial photograph`).
 
 ## Invocation

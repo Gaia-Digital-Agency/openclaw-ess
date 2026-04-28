@@ -11,10 +11,12 @@ Elliot delegates all production work. Direct skills are limited to planning, que
 - **dispatch-article** — **LIVE.** Run the full production chain for one article: copywriter → seo → imager → web-manager (POSTs as `pending_review`).
   Invoker: `node /opt/.openclaw-ess/workspace-main/scripts/dispatch-article.mjs`
   Path B semantics: hash-locked when an existing article holds the same source.hash with status pending_review/approved/published; rejected or deleted articles do not block.
-- **review-gate** — Pre-flight check before pushing to Payload: word count, persona voice match, image present, SEO meta non-empty, no AI-isms, no factual claims without crawler-cited source.
+- **review-gate** — **LIVE.** Pre-flight checks before submit. Returns `{ok, issues}` where each issue is `{level: error|warning, code, message}`. Hard rules: empty title/body/area/topic, missing hero, word_count below topic floor, banned phrases, SEO meta missing/too-long, duplicate source.hash. Soft rules: long body, no sources, no keywords. Exit code 0 = pass, 2 = fail.
+  Invoker: `node /opt/.openclaw-ess/workspace-main/scripts/review-gate.mjs --id=N` (or pipe JSON)
 - **status-report** — **LIVE.** Per-cell snapshot of the production matrix; counts every status (published/approved/pending_review/draft/rejected) per (area, topic). Default JSON; `--table` for human-readable grid; `--status=<one>` to focus on a single status column.
   Invoker: `node /opt/.openclaw-ess/workspace-main/scripts/status-report.mjs`
-- **maintenance-pass** — Identify stale articles (Events past date, News > 30 days) and queue refreshes.
+- **maintenance-pass** — **LIVE.** Scan published articles, find: events older than 14 days, news older than --news-days (default 30), features older than --feature-days (default 180). Dry-run by default. With --apply: flips expired events to status=draft (drops them from public + sitemap, keeps audit). Stale news/features stay published; their list feeds plan-wave for refresh dispatches.
+  Invoker: `node /opt/.openclaw-ess/workspace-main/scripts/maintenance-pass.mjs [--apply] [--news-days=N] [--feature-days=N]`
 
 ## Quality Gates (hard reject before submitting to Payload)
 

@@ -12,7 +12,8 @@
 - **regenerate-title(article)** — **LIVE.** Produces 5 alternative titles (≤60 chars each), each tagged with an editorial angle. Vertex Gemini schema-bound, temperature 0.7.
   Invoker: `node /opt/.openclaw-ess/workspace-copywriter/scripts/regenerate-title.mjs --id=N`
   Or pipe JSON stdin with `{title, sub_title, body_markdown, area, topic, persona}`.
-- **persona-check(text, persona)** — *scaffolded.* Score voice match 0–10, suggest fixes. Owned by Elliot orchestrator post-draft.
+- **persona-check(text, persona)** — **LIVE.** Score voice match 0–10 against persona guidelines via Vertex Gemini structured output. Returns score + verdict (publish-ready / minor-edits / needs-rewrite / not the persona) + summary + 3–5 issues + 3–5 concrete rewrite suggestions.
+  Invoker: `node /opt/.openclaw-ess/workspace-copywriter/scripts/persona-check.mjs --id=N [--persona=maya|komang|putu|sari]`
 
 ## Invocation
 
