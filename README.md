@@ -116,13 +116,47 @@ Mission Control: **https://ess.gaiada0.online** (paste the gateway token from `o
 
 ### B) xlsx tracker → drafts
 
-1. Operator edits `Essential Bali Proofread.xlsx` locally.
-2. Runs `bridge/sync-articles-inbox.sh` to rsync to gda-ai01.
+1. Operator edits `Essential Bali Proofread.xlsx` (in Google Drive — see below).
+2. **Scraper.pull-xlsx-from-drive** downloads the latest into `inbox/articles/`
+   (or, while a local Mac copy still exists, `bridge/sync-articles-inbox.sh`
+   rsyncs from there).
 3. **Scraper.read-articles-xlsx** reads sheets (Apr/May/June/...) → row JSON.
-4. For each row: optional **Scraper.read-google-doc** to pull Draft Link body.
+4. For each row: **Scraper.read-google-doc** pulls the Draft Link body.
 5. **Copywriter** finalizes voice, **Imager**/**SEO**, **Web Manager** posts `pending_review`.
 
 Both paths submit `status=pending_review` for human approval before publish.
+
+---
+
+## ★ Where to drop files for Elliot to process
+
+> **TODO for the operator:** create a single Google Drive folder and share it
+> with `ai@gaiada.com` (Editor). Elliot's OAuth user is wired to that account.
+
+Suggested layout:
+
+```
+📁 Essential Bali — Elliot Inbox     ← share once with ai@gaiada.com (Editor)
+   📁 articles-tracker/               ← the xlsx (Essential Bali Proofread)
+   📁 drafts/                          ← Google Docs (writers drop here)
+   📁 assets/                          ← images / PDFs / briefs
+```
+
+How it works:
+
+- Sharing the parent folder once gives `ai@gaiada.com` access to every file
+  added inside it later (no per-file shares needed).
+- `workspace-scraper/scripts/pull-xlsx-from-drive.py` finds and downloads the
+  tracker. `--list` enumerates every xlsx/sheet visible to the account.
+- `workspace-scraper/scripts/check-doc-access.py` walks every Draft Link in
+  the tracker and reports per-doc whether it can be read; it prints a list of
+  URLs to share if access is missing.
+- `workspace-scraper/scripts/read-google-doc.py` fetches a doc body as
+  Markdown (used downstream by Copywriter).
+
+**Status as of last check:** the tracker file (`Essential Bali Proofread`,
+owner `seo@gaiada.com`) is already accessible. The 8 Apr-sheet draft Docs
+are **not yet shared** — `check-doc-access.py` lists them.
 
 ---
 
