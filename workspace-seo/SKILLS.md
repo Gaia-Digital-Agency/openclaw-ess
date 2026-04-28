@@ -13,7 +13,10 @@
   Returned as part of `optimize-meta` output (primary_keyword + long_tail_keywords[]).
 - **schema-markup(article)** — Schema.org Article JSON-LD; emitted by the same helper.
 - **internal-link(article, candidates)** — `internal_link_anchors` in the optimize-meta output.
-- **competitor-gap(area, topic)** — *scaffolded.* Crawler feeds the data; SEO ranks gaps.
+- **competitor-gap(area, topic, missing_themes[])** — **LIVE.** Takes a gap-report (themes benchmarks cover that we don't) and ranks each by SEO opportunity. Returns ranked_gaps with primary_keyword, long_tail_keywords[], estimated_search_potential (high/medium/low), suggested_brief (ready for dispatch-article), angle, and rank.
+  Endpoint: `POST https://essentialbali.gaiada.online/api/seo-competitor-gap` (JWT auth)
+  Implementation: `cms/src/lib/competitor-gap.ts` (single source of truth; same pattern as optimize-meta)
+  Pipes naturally from Crawler gap-report -> SEO competitor-gap -> Elliot plan-wave.
 
 ## Invocation (HTTP — used by Elliot orchestrator)
 

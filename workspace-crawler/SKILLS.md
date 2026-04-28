@@ -12,10 +12,10 @@
 - **analyze(url)** — fetch + extract structured content from a single URL:
   title, meta description, OG image, h1/h2/h3, top paragraphs, internal links,
   word count.
-- **trend-scan(area)** — discover URLs across all 4 sources and merge by
-  recency hints (URLs containing the current year/month).
-- **gap-report(area, topic)** — what topics they cover that we don't (cross-ref
-  Payload `articles` for the same area×topic).
+- **trend-scan(area, topic?)** — **LIVE.** Discover URLs across all 4 benchmark sources, fetch each candidate, parse publication date from JSON-LD / og:article:published_time / time tag, sort newest first. Stricter URL filter: requires multi-word kebab-slug (>= 2 hyphens) OR >= 3 path segments to skip menu/category links.
+  Invoker: `node /opt/.openclaw-ess/workspace-crawler/scripts/trend-scan.mjs --area=<slug> [--topic=<slug>] [--site=<one>] [--limit=N]`
+- **gap-report(area, topic)** — **LIVE.** Runs trend-scan internally, queries Payload for our published titles in the cell, asks Vertex Gemini for theme diff. Returns missing_themes (each with theme + priority + example title) + overlap_themes. Flat string-array schema (avoiding the nested-OBJECT trap that caused JSON truncation in earlier prompts).
+  Invoker: `node /opt/.openclaw-ess/workspace-crawler/scripts/gap-report.mjs --area=<slug> --topic=<slug> [--limit=N]`
 
 ## Implementation
 
