@@ -22,6 +22,11 @@
 - **check-doc-access()** — for each Draft Link in the inbox xlsx, report
   whether `ai@gaiada.com` can read it; output an actionable list of docs to
   share.
+- **process-inbox(--pull?, --month?, --status?)** — end-to-end pipeline:
+  optionally refresh xlsx from Drive, parse rows, fetch each Draft Link's
+  body when accessible, and emit one JSON record per row with
+  `body_source ∈ {"draft","metadata"}` + idempotent `source_hash`. **Never
+  skips a row** — falls back to xlsx metadata when a Doc is not shared.
 
 ## Implementation
 
