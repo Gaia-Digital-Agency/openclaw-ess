@@ -2,7 +2,9 @@
 
 AI agent system that produces and manages content for **Essential Bali** (https://essentialbali.gaiada.online).
 
-Runs on `gda-ai01` at `/opt/.openclaw-ess`. Talks to the website's Payload CMS over HTTPS to CRUD articles, comments, media, and hero-ad slots.
+Runs on `gda-ai01` at `/opt/.openclaw-ess`. Talks to the website's Payload CMS at `https://essentialbali.gaiada.online/api/*` to CRUD articles, hero ads, subscribers, and newsletters.
+
+Mission Control: **https://ess.gaiada0.online** (paste the gateway token from `openclaw.json` to connect).
 
 ---
 
@@ -12,20 +14,21 @@ Runs on `gda-ai01` at `/opt/.openclaw-ess`. Talks to the website's Payload CMS o
    ┌──────────────────────────────────────────────────────────┐
    │             openclaw-ess  (this repo)                     │
    │                                                           │
-   │   Elliot (orchestrator, Haiku)                            │
+   │   Elliot (orchestrator, Haiku via Vertex)                 │
    │      │                                                    │
    │      ├── Crawler  (Gemini)   research benchmark sites     │
-   │      ├── Scraper  (Python)   deterministic data extract   │
+   │      ├── Scraper  (Python)   xlsx + Google Docs reader    │
    │      ├── Copywriter (Gemini) draft article body           │
    │      ├── Imager   (Imagen 3) hero + inline images         │
    │      ├── SEO      (Gemini)   meta, schema, internal links │
    │      └── Web Manager (Gemini) push to Payload via REST    │
    └────────────────────────┬─────────────────────────────────┘
-                            │ HTTPS (Payload REST + API key)
+                            │ HTTPS (JWT login → /api/*)
                             ▼
                    ┌─────────────────────┐
-                   │ Payload CMS @ s01   │
-                   │ (Phase D, port 4008)│
+                   │ Payload CMS         │
+                   │ essentialbali       │
+                   │ .gaiada.online/admin│
                    └────────┬────────────┘
                             │
                             ▼
@@ -35,182 +38,134 @@ Runs on `gda-ai01` at `/opt/.openclaw-ess`. Talks to the website's Payload CMS o
                    └─────────────────────┘
 ```
 
----
-
-## Agent schema
-
-### Roster
-
-| ID | Display name | Workspace | Primary model | Fallback | Sub-agents |
-|---|---|---|---|---|---|
-| `main` | **Elliot** | `workspace-main` | `anthropic/claude-haiku-4-5` | `google/gemini-2.5-flash` | all 6 below |
-| `copywriter` | Copywriter | `workspace-copywriter` | `google/gemini-2.5-flash` | `google/gemini-2.5-flash` | — |
-| `web-manager` | Web Manager | `workspace-web-manager` | `google/gemini-2.5-flash` | `google/gemini-2.5-flash` | — |
-| `seo` | SEO | `workspace-seo` | `google/gemini-2.5-flash` | `google/gemini-2.5-flash` | — |
-| `imager` | Imager | `workspace-imager` | `google/imagen-3.0-generate-002` | `google/gemini-2.5-flash` | — |
-| `crawler` | Crawler | `workspace-crawler` | `google/gemini-2.5-flash` | `google/gemini-2.5-flash` | — |
-| `scraper` | Scraper | `workspace-scraper` | `google/gemini-2.5-flash` (Python deterministic) | — | — |
-
-### Workspace file convention
-
-Every workspace has the same .md skeleton (cloned from the `.openclaw-var` template):
-
-```
-workspace-<id>/
-├── IDENTITY.md     who this agent is, self-introduction
-├── AGENTS.md       sub-agent map (leaf agents say "no sub-agents")
-├── SOUL.md         output rules, tone, banned phrases
-├── SKILLS.md       enumerated capabilities + I/O contracts
-├── HEARTBEAT.md    when to wake (idle / scheduled / webhook)
-├── MEMORY.md       what to persist long-term
-├── TOOLS.md        which plugins this workspace can use
-├── USER.md         who calls this agent
-└── state/          runtime state (gitignored)
-```
-
-### Message contracts
-
-Every agent returns **structured JSON**. Copywriter example:
-
-```json
-{
-  "title": "Where the Surf Meets Brunch in Canggu",
-  "slug": "where-surf-meets-brunch-canggu",
-  "sub_title": "...",
-  "body_markdown": "...",
-  "meta_title": "≤ 60 chars",
-  "meta_description": "≤ 160 chars",
-  "persona": "maya",
-  "area": "canggu",
-  "topic": "dine",
-  "word_count": 850,
-  "sources": [{"url":"...", "site":"thehoneycombers.com"}]
-}
-```
-
-Web Manager translates this into a Payload `POST /api/articles` payload with `status=pending_review`.
-
-### Production flow (one article)
-
-```
-target = elliot.plan-wave().pick()
-research  = crawler.discover(target)
-data      = scraper.extract(research.urls)
-draft     = copywriter.draft-article(target, research, data, persona=elliot.pick-persona())
-images    = imager.generate-hero(draft) + imager.generate-inline(draft, n=2)
-seo_meta  = seo.optimize-meta(draft, target) + seo.schema-markup(draft)
-article   = merge(draft, images, seo_meta)
-elliot.review-gate(article)               # hard quality checks
-web_manager.submit-article(article)       # → Payload pending_review
-                                          # → human approves in Payload admin
-```
-
-### Quality gates (hard reject before Payload submission)
-
-- Empty title / body / hero image
-- Word count below threshold (Featured ≥ 400, News ≥ 200)
-- Persona voice mismatch (per-persona regex + heuristic check)
-- AI-ism vocabulary detected (`delve`, `tapestry`, `hidden gem`, `bustling`, …)
-- Duplicate by `source.hash` or slug
-- Missing SEO meta (title or description)
-
-### Personas
-
-Multiple writer personas (per E-E-A-T best practice):
-
-| Persona | Voice | Best for |
-|---|---|---|
-| Maya | local foodie, warm, sensory | Dine, Featured |
-| Komang | activities guide, practical | Activities, Health & Wellness |
-| Putu | cultural insider, thoughtful | People & Culture, News |
-| Sari | nightlife reporter, energetic | Nightlife, Events |
-
-Personas live in Payload as a `personas` collection (avatar, bio, preferred topics).
+**Talk to Elliot from inside the CMS** — `/admin/elliot` (sidebar: Channels → Talk to Elliot). Same chat is also available from any public page via the floating bubble (bottom-right).
 
 ---
 
-## Production matrix
-
-```
-            Events  News  Featured  Dine  Health  Nightlife  Activities  People&Culture
-Canggu        20     20      20     20     20        20          20             20
-Kuta          20     20      20     20     20        20          20             20
-Ubud          20     20      20     20     20        20          20             20
-Jimbaran      20     20      20     20     20        20          20             20
-Denpasar      20     20      20     20     20        20          20             20
-Kintamani     20     20      20     20     20        20          20             20
-Singaraja     20     20      20     20     20        20          20             20
-Nusa Penida   20     20      20     20     20        20          20             20
-                                                                    Total ≈ 1,280
-```
-
-**Wave plan:**
-- **Wave 1** — 1 article per group (64 articles): full-matrix seeding, lets Google discover topology
-- **Wave 2–N** — 4–5/group/week (~256/wave): 5 waves complete the target
-- **Maintenance** — refresh stale Events, News, Featured indefinitely
-
-Each of the 64 cells also has a **hero ad slot** (placeholder: "Ads space > Canggu > Events" until activated). Toggle via Payload admin (`Activate / Deactivate`).
-
----
-
-## File structure
+## Repo layout
 
 ```
 .openclaw-ess/
-├── README.md               ← you are here
-├── openclaw.json           central config (gitignored — contains config + agent roster)
+├── README.md                  ← you are here
+├── openclaw.json              instance config (gitignored)
 ├── .gitignore
-├── plugins/                MCP tools, shared (gitignored runtime config)
-├── workspace-main/         Elliot (orchestrator)
+├── bridge/
+│   └── sync-articles-inbox.sh    rsync local xlsx → /opt/.openclaw-ess/inbox/articles/
+├── credentials/                  (gitignored — secrets)
+│   ├── gda-viceroy-vertex.json   service account, Vertex AI access
+│   ├── .env.vertex               GCP project + model env
+│   ├── .env.payload              PAYLOAD_AGENT_EMAIL/PASSWORD for JWT login
+│   ├── drive_credentials.json    OAuth client (from /var/www/gdrive)
+│   └── google-user-token.json    user OAuth token (ai@gaiada.com)
+├── inbox/
+│   └── articles/                 xlsx tracker drops (synced from local)
+├── plugins/
+├── workspace-main/               Elliot
+│   ├── IDENTITY.md / SOUL.md / SKILLS.md / AGENTS.md / …
+│   ├── SKILL-CRAWL-BENCHMARK.md  multi-agent: research → article draft
+│   └── SKILL-READ-INBOX.md       multi-agent: xlsx → article drafts
 ├── workspace-copywriter/
 ├── workspace-web-manager/
 ├── workspace-seo/
 ├── workspace-imager/
 ├── workspace-crawler/
-├── workspace-scraper/
-├── agents/<id>/            runtime per-agent state (sessions/ are gitignored)
-├── memory/                 long-term memory sqlite stores (gitignored)
-├── identity/               device IDs (gitignored)
-├── credentials/            API key secrets (gitignored)
-├── devices/, canvas/, docs/, logs/, tasks/    runtime
-└── update-check.json       (gitignored)
+│   ├── SKILLS.md
+│   └── scripts/crawl-benchmark.mjs    Node fetch + extract + robots.txt + 1 req/s
+└── workspace-scraper/
+    ├── SKILLS.md
+    └── scripts/
+        ├── read-articles-xlsx.py      Python openpyxl reader
+        └── read-google-doc.py         Python Docs API reader (user OAuth)
 ```
 
 ---
 
-## Wiring to Essential Bali (Phase D foundation deployed)
+## Agent skills (current)
 
-- **Payload base URL:** `http://gda-s01.asia-southeast1-b.c.gda-viceroy.internal:4008` (internal GCP network)
-- **API key env var:** `PAYLOAD_AI_API_KEY` — generated at provisioning, stored in `cms/.env` on gda-s01 and mirrored into `credentials/` here
-- **Site base URL** (used in copy & links): `https://essentialbali.gaiada.online`
-- **Collections available** (Payload REST):
-  - `GET /api/areas` — 8 fixed
-  - `GET /api/topics` — 8 fixed
-  - `GET /api/personas` — Maya, Komang, Putu, Sari (seeded)
-  - `POST /api/articles` — submit drafts as `status=pending_review`
-  - `POST /api/media` — multipart upload (Imager uses this)
-  - `POST /api/comments` — agent-authored or human
-  - `GET/PATCH /api/hero-ads` — 64 placeholder slots; toggle `active` to flip from placeholder to creative
-- **GraphQL playground:** `http://gda-s01:4008/api/graphql-playground`
+| Agent | Skill | Implementation |
+|---|---|---|
+| **Elliot** (`workspace-main`) | orchestrate · plan · review-gate · status-report | Haiku via Vertex Gemini fallback |
+| **Crawler** | discover · analyze · trend-scan · gap-report | `scripts/crawl-benchmark.mjs` (Node, native fetch, no deps). Honors robots.txt. 1 req/sec/host. UA `EssentialBaliBot/1.0`. |
+| **Scraper** | fetch · extract-article · read-inbox-xlsx · read-google-doc · geocode | `scripts/read-articles-xlsx.py` (openpyxl) and `scripts/read-google-doc.py` (Google Docs API via user OAuth, fallback service account) |
+| **Copywriter** | draft-article · rewrite-article · regenerate-title · persona-check | Gemini with persona prompts |
+| **Imager** | generate-hero · generate-inline · regenerate · alt-text | Imagen 3 |
+| **SEO** | keyword-research · optimize-meta · schema-markup · internal-link · competitor-gap | Gemini |
+| **Web Manager** | submit-article · upload-media · link-hero · submit-comment · toggle-hero-ad · fetch-status · list-pending-review | Payload REST + JWT (`/api/*`) |
 
-### Web Manager → Payload contract example
+---
+
+## Production matrix
+
+8 areas × 8 topics × ~20 articles ≈ **1,280 articles** target.
+
+- **Areas:** Canggu, Kuta, Ubud, Jimbaran, Denpasar, Kintamani, Singaraja, Nusa Penida
+- **Topics:** Events, News, Featured, Dine, Health & Wellness, Nightlife, Activities, People & Culture
+- Each cell also has 1 hero ad slot — 64 placeholder slots, toggleable in Payload admin.
+
+---
+
+## Two ways content enters Payload
+
+### A) Crawler benchmark research → draft
+
+1. Elliot picks a (area, topic) cell with a low article count.
+2. **Crawler** runs `discover` across the 4 benchmark sources (whatsnewindonesia, thehoneycombers/bali, nowbali, thebalibible).
+3. For top 3 candidates, **Crawler.analyze** extracts headings + paragraphs.
+4. **Copywriter** writes a fresh Essential Bali article from research (never republish).
+5. **Imager** generates hero, **SEO** adds meta, **Web Manager** posts as `pending_review`.
+
+### B) xlsx tracker → drafts
+
+1. Operator edits `Essential Bali Proofread.xlsx` locally.
+2. Runs `bridge/sync-articles-inbox.sh` to rsync to gda-ai01.
+3. **Scraper.read-articles-xlsx** reads sheets (Apr/May/June/...) → row JSON.
+4. For each row: optional **Scraper.read-google-doc** to pull Draft Link body.
+5. **Copywriter** finalizes voice, **Imager**/**SEO**, **Web Manager** posts `pending_review`.
+
+Both paths submit `status=pending_review` for human approval before publish.
+
+---
+
+## Mission Control (https://ess.gaiada0.online)
+
+OpenClaw Control UI served by `openclaw-ess-gateway.service` on port `:19290` (loopback) → nginx HTTPS.
+
+To connect from your browser:
+1. Open https://ess.gaiada0.online
+2. **WebSocket URL:** `wss://ess.gaiada0.online`
+3. **Gateway Token:** copy from `/opt/.openclaw-ess/openclaw.json` → `gateway.auth.token`
+4. **Connect** — first time triggers a pairing request; SSH in and `openclaw devices approve <id>` to allow.
+
+Once paired, the dashboard shows live agent state, queues, and lets you DM Elliot.
+
+---
+
+## Service ops
 
 ```bash
-curl -X POST http://gda-s01:4008/api/articles \
-  -H "Authorization: users API-Key $PAYLOAD_AI_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title":"Where the Surf Meets Brunch in Canggu",
-    "slug":"where-surf-meets-brunch-canggu",
-    "area": <area_id>,
-    "topic": <topic_id>,
-    "persona": <persona_id>,
-    "status":"pending_review",
-    "body": { "root": { ... lexical ... } },
-    "seo": { "metaTitle":"...", "metaDescription":"..." },
-    "source": { "url":"...", "site":"thehoneycombers.com", "hash":"sha256:..." }
-  }'
+# gateway service
+systemctl --user status openclaw-ess-gateway
+systemctl --user restart openclaw-ess-gateway
+journalctl --user -u openclaw-ess-gateway --no-pager -n 50
+
+# devices (pairing approvals)
+OPENCLAW_STATE_DIR=/opt/.openclaw-ess OPENCLAW_CONFIG_PATH=/opt/.openclaw-ess/openclaw.json \
+  node /home/azlan/.npm-global/lib/node_modules/openclaw/dist/index.js devices list
 ```
+
+---
+
+## Credentials
+
+All gitignored. Cred provenance:
+
+| File | Source | Used for |
+|---|---|---|
+| `credentials/gda-viceroy-vertex.json` | copy of `/var/www/gaiadaweb/secure/...` | Vertex AI / Gemini / Imagen |
+| `credentials/.env.vertex` | local | Vertex project + model + location |
+| `credentials/.env.payload` | local | `PAYLOAD_AGENT_EMAIL` (`elliot@gaiada.com`) + password for JWT login at `https://essentialbali.gaiada.online/api/users/login` |
+| `credentials/drive_credentials.json` | copy of `/var/www/gdrive/keys/drive_credentials.json` | Google OAuth client (project `gda-viceroy`) |
+| `credentials/google-user-token.json` | copy of `/var/www/gdrive/keys/drive_token_rw.json` | refreshable Drive token for `ai@gaiada.com` |
 
 ---
 
@@ -221,30 +176,30 @@ curl -X POST http://gda-s01:4008/api/articles \
 | openclaw-ess (this) | `git@github.com:Gaia-Digital-Agency/openclaw-ess.git` |
 | essentialbali | `git@github.com:Gaia-Digital-Agency/essentialbali.git` |
 
+Branch model: **`main` only** (dev branch retired once cutover stabilized).
+
 ---
 
-## Local dev / ops
+## Quick checks
 
 ```bash
-# SSH
-ssh gda-ai01
+# Crawler discovery
+node /opt/.openclaw-ess/workspace-crawler/scripts/crawl-benchmark.mjs \
+  --discover --site=thehoneycombers.com/bali --area=canggu --topic=dine
 
-# Inspect
-cat /opt/.openclaw-ess/openclaw.json
-ls /opt/.openclaw-ess/workspace-main/
+# xlsx reader (latest in inbox)
+python3 /opt/.openclaw-ess/workspace-scraper/scripts/read-articles-xlsx.py | jq '.count'
 
-# Tail logs
-tail -f /opt/.openclaw-ess/logs/*.log
+# Google Doc fetch (must be shared with ai@gaiada.com)
+python3 /opt/.openclaw-ess/workspace-scraper/scripts/read-google-doc.py \
+  "https://docs.google.com/document/d/<DOC_ID>/edit" | head -20
+
+# Payload connectivity (JWT login + /me from gda-ai01)
+source /opt/.openclaw-ess/credentials/.env.payload
+TOKEN=$(curl -s -X POST "$PAYLOAD_BASE_URL/api/users/login" \
+  -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$PAYLOAD_AGENT_EMAIL\",\"password\":\"$PAYLOAD_AGENT_PASSWORD\"}" \
+  | jq -r .token)
+curl -s "$PAYLOAD_BASE_URL/api/users/me" -H "Authorization: JWT $TOKEN" | jq '.user.role'
+# → "ai-agent"
 ```
-
----
-
-## Roadmap
-
-| Phase | Status |
-|---|---|
-| A — `dev` branch on essentialbali | ✅ done |
-| B — sitemap/robots fix + READMEs | ✅ done |
-| C — `.openclaw-ess` scaffold (this) | 🔄 in progress |
-| D — 3PVTRN migration on essentialbali | ⏳ pending |
-| Cutover — DNS to `essentialbali.com` | ⏳ later |
