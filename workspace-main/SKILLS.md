@@ -12,7 +12,8 @@ Elliot delegates all production work. Direct skills are limited to planning, que
   Invoker: `node /opt/.openclaw-ess/workspace-main/scripts/dispatch-article.mjs`
   Path B semantics: hash-locked when an existing article holds the same source.hash with status pending_review/approved/published; rejected or deleted articles do not block.
 - **review-gate** — Pre-flight check before pushing to Payload: word count, persona voice match, image present, SEO meta non-empty, no AI-isms, no factual claims without crawler-cited source.
-- **status-report** — Summarize per-group progress (area×topic): published / approved / pending_review / draft.
+- **status-report** — **LIVE.** Per-cell snapshot of the production matrix; counts every status (published/approved/pending_review/draft/rejected) per (area, topic). Default JSON; `--table` for human-readable grid; `--status=<one>` to focus on a single status column.
+  Invoker: `node /opt/.openclaw-ess/workspace-main/scripts/status-report.mjs`
 - **maintenance-pass** — Identify stale articles (Events past date, News > 30 days) and queue refreshes.
 
 ## Quality Gates (hard reject before submitting to Payload)
