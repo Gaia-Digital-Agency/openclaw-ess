@@ -78,7 +78,9 @@ const PAYLOAD_AGENT_PASSWORD =
   process.env.PAYLOAD_AI_API_KEY;
 
 const COPYWRITER = "/opt/.openclaw-ess/workspace-copywriter/scripts/draft-article.mjs";
-const SEO_AGENT = "/opt/.openclaw-ess/workspace-seo/scripts/optimize-meta.mjs";
+// SEO agent now lives as an HTTP service at Payload (/api/seo-optimize),
+// authoritative single source of truth (used by Articles.beforeChange too).
+const SEO_AGENT_URL = `${process.env.PAYLOAD_BASE_URL || "https://essentialbali.gaiada.online"}/api/seo-optimize`;
 const IMAGER = "/opt/.openclaw-ess/workspace-imager/scripts/generate-hero.mjs";
 
 // ── tiny utils ──────────────────────────────────────────────────────
@@ -318,22 +320,32 @@ async function main() {
     log(`copywriter banned-phrases: ${copy.banned_phrases_found.join(", ")} — manual review needed`);
   }
 
-  // 4. SEO
+  // 4. SEO — HTTP call to Payload (canonical impl in cms/src/lib/seo-agent.ts)
   log("seo…");
   let seo = null;
   try {
-    seo = await runJsonAgent(
-      SEO_AGENT,
-      {
+    const token = await login();
+    const res = await fetch(SEO_AGENT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `JWT ${token}` },
+      body: JSON.stringify({
         area, topic,
         title: copy.title,
-        sub_title: copy.sub_title,
-        body_markdown: copy.body_markdown,
-        existing_meta_title: copy.meta_title,
-        slug: copy.slug,
-      },
-      "seo",
-    );
+        subTitle: copy.sub_title,
+        bodyText: copy.body_markdown,
+        existingMetaTitle: copy.meta_title,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const out = await res.json();
+    // Map back to the shape downstream code expects.
+    seo = {
+      primary_keyword: out.primary_keyword,
+      long_tail_keywords: out.long_tail_keywords || [],
+      meta_title: out.meta_title,
+      meta_description: out.meta_description,
+      internal_link_anchors: out.internal_link_anchors || [],
+    };
   } catch (e) {
     log(`seo failed (non-fatal): ${e.message}`);
   }
