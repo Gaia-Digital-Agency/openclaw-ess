@@ -1,0 +1,10 @@
+{
+  "name": "openclaw-ess",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Shared deps for Elliot + sub-agents (Copywriter, SEO, Imager, Crawler)",
+  "dependencies": {
+    "google-auth-library": "^9.14.1"
+  }
+}

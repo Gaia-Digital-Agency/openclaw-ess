@@ -25,3 +25,15 @@ flows/
 tasks/
 venv/
 workspace_bak/
+
+# Shared Node deps + workspace symlinks
+node_modules/
+**/node_modules
+package-lock.json
+
+# Inbox content (xlsx + extracts)
+inbox/
+
+# Worker scratch state
+workspace-*/state/*.json
+workspace-main/.openclaw/
