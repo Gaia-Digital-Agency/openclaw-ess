@@ -130,7 +130,36 @@ async function callGemini(prompt) {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.5, maxOutputTokens: 4000, responseMimeType: "application/json" },
+      generationConfig: {
+        temperature: 0.5,
+        maxOutputTokens: 4000,
+        responseMimeType: "application/json",
+        // Schema forces Vertex to return well-formed JSON with these exact
+        // fields. Eliminates the unterminated-string failures we saw when
+        // long body_markdown strings contained unescaped quotes.
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            title:            { type: "STRING" },
+            sub_title:        { type: "STRING" },
+            body_markdown:    { type: "STRING" },
+            meta_title:       { type: "STRING" },
+            meta_description: { type: "STRING" },
+            keywords:         { type: "ARRAY", items: { type: "STRING" } },
+            sources: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  url:  { type: "STRING" },
+                  site: { type: "STRING" },
+                },
+              },
+            },
+          },
+          required: ["title", "body_markdown", "meta_title", "meta_description"],
+        },
+      },
     }),
   });
   if (!res.ok) {
