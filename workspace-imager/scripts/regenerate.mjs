@@ -115,14 +115,26 @@ async function runHeroGenerator(input) {
   });
 }
 
-async function uploadHero(filepath, alt) {
+async function uploadHero(filepath, alt, meta = {}) {
+  // meta = { area, topic, linkedArticle } — used by the N3 canonical-filename
+  // hook on the Media collection to derive {source}_{kind}_{area}_{topic}_
+  // {slug}-{nano}.webp. We always set source=imager + kind=hero here since
+  // this script only ever uploads regenerated hero images.
   const t = await login();
   const buf = await readFile(filepath);
   const FormDataNode = (await import("formdata-node")).FormData;
   const { Blob } = await import("node:buffer");
   const form = new FormDataNode();
   form.set("file", new Blob([buf], { type: "image/png" }), filepath.split("/").pop());
-  form.set("_payload", JSON.stringify({ alt: alt || "Regenerated hero", generatedBy: "imager" }));
+  const payload = {
+    alt: alt || "Regenerated hero",
+    source: "imager",
+    kind: "hero",
+    ...(meta.area ? { area: meta.area } : {}),
+    ...(meta.topic ? { topic: meta.topic } : {}),
+    ...(meta.linkedArticle ? { linkedArticle: meta.linkedArticle } : {}),
+  };
+  form.set("_payload", JSON.stringify(payload));
   const res = await fetch(`${PAYLOAD_BASE_URL}/api/media`, {
     method: "POST",
     headers: { Authorization: `JWT ${t}` },
@@ -217,7 +229,11 @@ async function main() {
     console.error("generate-hero did not produce a file");
     process.exit(1);
   }
-  const mediaDoc = await uploadHero(file.path, file.alt_text || original.title);
+  const mediaDoc = await uploadHero(file.path, file.alt_text || original.title, {
+    area: original.area,
+    topic: original.topic,
+    linkedArticle: original.id || undefined,
+  });
 
   console.log(JSON.stringify({
     article_id: original.id || null,

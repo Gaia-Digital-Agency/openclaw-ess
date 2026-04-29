@@ -166,14 +166,28 @@ async function checkExisting(area, topic, sourceHash) {
   return d?.docs?.[0] || null;
 }
 
-async function uploadHero(filepath, alt) {
+async function uploadHero(filepath, alt, meta = {}) {
+  // meta = { area, topic, linkedArticle? } — used by the N3 canonical-
+  // filename hook on the Media collection. We always set source=imager
+  // + kind=hero here. linkedArticle is optional because dispatch creates
+  // the article AFTER the hero upload; in that case the slug falls back
+  // to the alt text (which contains the title), still producing a clean
+  // canonical name like imager_hero_<area>_<topic>_<title-slug>-<nano>.webp.
   const fs = await import("node:fs/promises");
   const buf = await fs.readFile(filepath);
   const FormDataNode = (await import("formdata-node")).FormData;
   const { Blob } = await import("node:buffer");
   const form = new FormDataNode();
   form.set("file", new Blob([buf], { type: "image/png" }), filepath.split("/").pop());
-  form.set("_payload", JSON.stringify({ alt: alt || "Hero image", generatedBy: "imager" }));
+  const payload = {
+    alt: alt || "Hero image",
+    source: "imager",
+    kind: "hero",
+    ...(meta.area ? { area: meta.area } : {}),
+    ...(meta.topic ? { topic: meta.topic } : {}),
+    ...(meta.linkedArticle ? { linkedArticle: meta.linkedArticle } : {}),
+  };
+  form.set("_payload", JSON.stringify(payload));
   const res = await payloadFetch("/api/media", { method: "POST", body: form });
   if (!res.ok) throw new Error(`media upload ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const d = await res.json();
@@ -374,7 +388,12 @@ async function main() {
       const heroAlt = im?.files?.[0]?.alt_text || copy.title;
       if (heroPath) {
         log(`imager → uploading ${heroPath} to /api/media`);
-        heroId = await uploadHero(heroPath, heroAlt);
+        // Article doesn't exist yet (created by submitArticle a few lines
+        // below). Pass area/topic so the canonical filename includes them;
+        // the hero's linkedArticle gets PATCHed by Web Manager after the
+        // article is submitted (TODO if exposed; for now alt-derived slug
+        // already includes the title, so the name is human-readable).
+        heroId = await uploadHero(heroPath, heroAlt, { area, topic });
         log(`hero media id=${heroId}`);
       }
     } catch (e) {
