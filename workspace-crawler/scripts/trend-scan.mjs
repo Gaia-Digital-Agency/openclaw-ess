@@ -34,44 +34,81 @@ const RATE_LIMIT_MS = 1100;
 // Per-site discovery URL templates. Each function returns the search URL
 // for a given area (and optional topic). Best-effort — sites have wildly
 // different IA, so we just pick one or two reasonable starting points.
+// Per-site listing-page maps. We hit these category/listing URLs FIRST
+// (high signal — pages built to show recent articles), and fall back to
+// the site's `?s=` search when no listing path is known for a topic.
+//
+// Map values: array of "{area}"-templated paths. The runtime substitutes
+// area before fetch. Discovered by curl recon — only paths verified to
+// return HTTP 200 are listed.
 const SOURCES = {
   honeycombers: {
     base: "https://thehoneycombers.com/bali",
-    discoverUrls: (area, topic) => {
-      const urls = [];
-      // Honeycombers indexes by tag — area + topic both work as tags.
-      urls.push(`https://thehoneycombers.com/bali/?s=${encodeURIComponent(area)}`);
-      if (topic) {
-        urls.push(`https://thehoneycombers.com/bali/?s=${encodeURIComponent(area + " " + topic)}`);
-      }
-      return urls;
+    listings: {
+      // /bali/eat-drink/ and /bali/things-to-do/ are large evergreen indexes.
+      // /bali/guides/{area}/ is area-scoped — gold for area-relevant items.
+      dine:              ["/bali/eat-drink/",       "/bali/guides/{area}/"],
+      "health-wellness": [                          "/bali/guides/{area}/"],
+      activities:        ["/bali/things-to-do/",    "/bali/guides/{area}/"],
+      nightlife:         ["/bali/eat-drink/",       "/bali/guides/{area}/"],
+      events:            [                          "/bali/guides/{area}/"],
+      news:              [                          "/bali/guides/{area}/"],
+      featured:          [                          "/bali/guides/{area}/"],
+      "people-culture":  [                          "/bali/guides/{area}/"],
     },
   },
   whatsnew: {
     base: "https://whatsnewindonesia.com",
-    discoverUrls: (area, topic) => {
-      const urls = [`https://whatsnewindonesia.com/?s=${encodeURIComponent(area)}`];
-      if (topic) urls.push(`https://whatsnewindonesia.com/?s=${encodeURIComponent(area + " " + topic)}`);
-      return urls;
+    listings: {
+      dine:              ["/category/food-drink"],
+      "health-wellness": ["/category/lifestyle"],
+      activities:        ["/category/lifestyle"],
+      nightlife:         ["/category/food-drink", "/category/lifestyle"],
+      news:              ["/category/news"],
+      featured:          ["/category/lifestyle"],
+      "people-culture":  ["/category/lifestyle"],
+      // events: search fallback (/category/events/ redirects to home — dead path).
     },
   },
   nowbali: {
     base: "https://www.nowbali.co.id",
-    discoverUrls: (area, topic) => {
-      const urls = [`https://www.nowbali.co.id/?s=${encodeURIComponent(area)}`];
-      if (topic) urls.push(`https://www.nowbali.co.id/?s=${encodeURIComponent(area + " " + topic)}`);
-      return urls;
+    listings: {
+      dine:              ["/category/restaurants-bars"],
+      "health-wellness": ["/category/health-wellness"],
+      activities:        ["/category/explore-bali"],
+      nightlife:         ["/category/restaurants-bars"],
+      news:              ["/category/news"],
+      featured:          ["/category/features"],
+      "people-culture":  ["/category/culture"],
+      // events: search fallback.
     },
   },
   balibible: {
     base: "https://www.thebalibible.com",
-    discoverUrls: (area, topic) => {
-      const urls = [`https://www.thebalibible.com/?s=${encodeURIComponent(area)}`];
-      if (topic) urls.push(`https://www.thebalibible.com/?s=${encodeURIComponent(area + " " + topic)}`);
-      return urls;
-    },
+    // No discoverable /category/* listings on the public root (likely
+    // JS-rendered or differently structured). Search fallback only.
+    listings: {},
   },
 };
+
+// Search-URL fallback used when the topic has no known listing path
+// for a given site.
+function searchFallback(siteKey, area, topic) {
+  const baseHost = new URL(SOURCES[siteKey].base).host;
+  const q = topic ? `${area} ${topic}` : area;
+  return [`https://${baseHost}/?s=${encodeURIComponent(q)}`];
+}
+
+function discoverUrlsFor(siteKey, area, topic) {
+  const cfg = SOURCES[siteKey];
+  const listings = cfg.listings || {};
+  const paths = (topic && listings[topic]) || null;
+  const baseHost = new URL(cfg.base).host;
+  if (paths && paths.length) {
+    return paths.map((p) => `https://${baseHost}${p.replace("{area}", area)}`);
+  }
+  return searchFallback(siteKey, area, topic);
+}
 
 // rate-limit per host
 const lastFetchByHost = new Map();
@@ -185,7 +222,7 @@ async function main() {
 
   for (const siteKey of sites) {
     const cfg = SOURCES[siteKey];
-    const urls = cfg.discoverUrls(flags.area, flags.topic);
+    const urls = discoverUrlsFor(siteKey, flags.area, flags.topic);
     let attempted = 0;
     let succeeded = 0;
     for (const u of urls) {
@@ -200,7 +237,31 @@ async function main() {
         }
       }
     }
-    sourcesTried.push({ site: siteKey, attempted, succeeded });
+    sourcesTried.push({ site: siteKey, attempted, succeeded, listing_paths: urls.map((u) => new URL(u).pathname + (new URL(u).search || "")) });
+  }
+
+  // Area-relevance filter — when scanning a category listing (e.g.
+  // honeycombers /bali/eat-drink/) we get every recent food article in
+  // Bali, not just Canggu. Filter to candidates whose URL slug or title
+  // contains the area name (or a known alias).
+  const areaTokens = new Set([
+    flags.area.toLowerCase(),
+    flags.area.toLowerCase().replace(/-/g, " "),
+    flags.area.toLowerCase().replace(/-/g, ""),
+  ]);
+  const matchesArea = (c) => {
+    const haystack = (c.url + " " + (c.title || "")).toLowerCase();
+    for (const t of areaTokens) if (haystack.includes(t)) return true;
+    return false;
+  };
+  // First pass: keep only area-matching candidates. If we'd end up with
+  // too few (<3), relax the filter and keep originals — better some
+  // signal than none.
+  const areaFiltered = [...allCandidates.values()].filter(matchesArea);
+  const beforeFilterCount = allCandidates.size;
+  if (areaFiltered.length >= 3) {
+    allCandidates.clear();
+    for (const c of areaFiltered) allCandidates.set(c.url, c);
   }
 
   // Optional: enrich top candidates with publication date by fetching
@@ -222,6 +283,8 @@ async function main() {
     topic: flags.topic || null,
     generated_at: new Date().toISOString(),
     sources_tried: sourcesTried,
+    candidates_before_area_filter: beforeFilterCount,
+    candidates_after_area_filter: allCandidates.size,
     items_count: items.length,
     items,
   }, null, 2));

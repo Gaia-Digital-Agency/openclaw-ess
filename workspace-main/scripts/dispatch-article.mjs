@@ -204,7 +204,7 @@ function markdownToLexical(md) {
 }
 
 async function submitArticle({
-  area, topic, areaId, topicId, copy, seo, heroId, sourceUrl, sourceHash,
+  area, topic, areaId, topicId, personaId, copy, seo, heroId, sourceUrl, sourceHash,
 }) {
   const body = markdownToLexical(copy.body_markdown);
   const payload = {
@@ -213,6 +213,7 @@ async function submitArticle({
     subTitle: copy.sub_title || undefined,
     area: areaId,
     topic: topicId,
+    ...(personaId ? { persona: personaId } : {}),
     status: "pending_review",
     body,
     hero: heroId || undefined,
@@ -294,13 +295,17 @@ async function main() {
   }
 
   // 2. Resolve area/topic ids
-  const [areaId, topicId] = await Promise.all([
+  const [areaId, topicId, personaId] = await Promise.all([
     findTaxonomyIdBySlug("areas", area),
     findTaxonomyIdBySlug("topics", topic),
+    findTaxonomyIdBySlug("personas", persona),
   ]);
   if (!areaId || !topicId) {
     console.error(`[dispatch] taxonomy lookup failed area=${areaId} topic=${topicId}`);
     process.exit(3);
+  }
+  if (!personaId) {
+    log(`persona slug "${persona}" not found in /api/personas — submitting with persona=null`);
   }
 
   // 3. Copywriter
@@ -382,7 +387,7 @@ async function main() {
   let article;
   try {
     article = await submitArticle({
-      area, topic, areaId, topicId,
+      area, topic, areaId, topicId, personaId,
       copy, seo, heroId,
       sourceUrl: researchUrl,
       sourceHash,
