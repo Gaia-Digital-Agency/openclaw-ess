@@ -38,7 +38,9 @@ Mission Control: **https://ess.gaiada0.online** (paste the gateway token from `o
                    └─────────────────────┘
 ```
 
-**Talk to Elliot from inside the CMS** — `/admin/elliot` (sidebar: Channels → Talk to Elliot). Same chat is also available from any public page via the floating bubble (bottom-right).
+**Talk to Elliot from inside the CMS** — `/admin/elliot` (sidebar: AI agent → Talk to Elliot). Same chat is also available from any public page via the floating bubble (bottom-right).
+
+All 7 entities (Elliot + 6 sub-agents) expose **39 skills total** — every skill is currently 🟢 LIVE. Per-skill status (LIVE / scaffolded), invocation contracts, and skill-specific links are visible on the `/admin/elliot` page and in `/var/www/essentialbali/docs/user_guide.md`.
 
 ---
 
@@ -47,50 +49,79 @@ Mission Control: **https://ess.gaiada0.online** (paste the gateway token from `o
 ```
 .openclaw-ess/
 ├── README.md                  ← you are here
+├── package.json               shared deps (google-auth-library, formdata-node)
 ├── openclaw.json              instance config (gitignored)
 ├── .gitignore
 ├── bridge/
-│   └── sync-articles-inbox.sh    rsync local xlsx → /opt/.openclaw-ess/inbox/articles/
+│   └── sync-articles-inbox.sh    legacy rsync helper
 ├── credentials/                  (gitignored — secrets)
 │   ├── gda-viceroy-vertex.json   service account, Vertex AI access
 │   ├── .env.vertex               GCP project + model env
-│   ├── .env.payload              PAYLOAD_AGENT_EMAIL/PASSWORD for JWT login
-│   ├── drive_credentials.json    OAuth client (from /var/www/gdrive)
+│   ├── .env.payload              PAYLOAD_AGENT_EMAIL / PASSWORD / BASE_URL for JWT login
+│   ├── drive_credentials.json    OAuth client (mirror of /var/www/gdrive)
 │   └── google-user-token.json    user OAuth token (ai@gaiada.com)
 ├── inbox/
-│   └── articles/                 xlsx tracker drops (synced from local)
-├── plugins/
-├── workspace-main/               Elliot
+│   └── articles/                 xlsx tracker drops (synced from Drive)
+├── workspace-main/                  Elliot — orchestrator
 │   ├── IDENTITY.md / SOUL.md / SKILLS.md / AGENTS.md / …
-│   ├── SKILL-CRAWL-BENCHMARK.md  multi-agent: research → article draft
-│   └── SKILL-READ-INBOX.md       multi-agent: xlsx → article drafts
+│   ├── SKILL-CRAWL-BENCHMARK.md     multi-agent skill: research → article draft
+│   ├── SKILL-READ-INBOX.md          multi-agent skill: xlsx → article drafts
+│   └── scripts/
+│       ├── plan-wave.mjs            picks deficit cells, builds dispatch queue,
+│       │                             --execute fires at 1/min with retry
+│       ├── dispatch-article.mjs     full chain crawler → copy → SEO → imager → web-manager
+│       ├── status-report.mjs        per-cell status counts (table or JSON)
+│       ├── review-gate.mjs          standalone pre-flight: {ok, issues}
+│       └── maintenance-pass.mjs     stale-content sweep (Events > 14d, News > 30d, …)
 ├── workspace-copywriter/
-├── workspace-web-manager/
+│   ├── SKILLS.md
+│   └── scripts/
+│       ├── draft-article.mjs        Vertex Gemini, JSON-schema bound, 4-persona presets
+│       ├── rewrite-article.mjs      revise existing article from feedback (source.hash _vN)
+│       └── regenerate-title.mjs     5 alternative titles + editorial angles
+├── workspace-web-manager/           HTTP-only — no scripts. Uses Payload REST + JWT.
 ├── workspace-seo/
+│   └── SKILLS.md                    optimize-meta + competitor-gap are HTTP services
+│                                     hosted by Payload (cms/src/lib/seo-agent.ts +
+│                                     cms/src/lib/competitor-gap.ts) — single source of truth.
 ├── workspace-imager/
+│   ├── SKILLS.md
+│   └── scripts/
+│       ├── generate-hero.mjs        Imagen 3, 16:9 hero, area + topic + persona cues
+│       └── regenerate.mjs           feedback-driven re-roll (uploads new media + returns ids)
 ├── workspace-crawler/
 │   ├── SKILLS.md
-│   └── scripts/crawl-benchmark.mjs    Node fetch + extract + robots.txt + 1 req/s
+│   └── scripts/
+│       ├── crawl-benchmark.mjs      single-URL or --discover mode
+│       ├── trend-scan.mjs           per-site listing-page recon, area-relevance filter
+│       └── gap-report.mjs           trend-scan + Payload titles → Vertex theme diff
 └── workspace-scraper/
     ├── SKILLS.md
     └── scripts/
-        ├── read-articles-xlsx.py      Python openpyxl reader
-        └── read-google-doc.py         Python Docs API reader (user OAuth)
+        ├── read-articles-xlsx.py    openpyxl reader
+        ├── pull-xlsx-from-drive.py  downloads tracker via OAuth
+        ├── read-google-doc.py       Doc body → Markdown
+        ├── check-doc-access.py      per-doc share-status report
+        └── process-inbox.py         end-to-end pipeline, never skips a row
 ```
 
 ---
 
-## Agent skills (current)
+## Agent skills (39 total — all 🟢 LIVE)
 
-| Agent | Skill | Implementation |
+Per-skill status, signature, and full description visible at
+`https://essentialbali.gaiada.online/admin/elliot` and in
+`/var/www/essentialbali/docs/user_guide.md`.
+
+| Agent | Skills | Backend |
 |---|---|---|
-| **Elliot** (`workspace-main`) | orchestrate · plan · review-gate · status-report | Haiku via Vertex Gemini fallback |
-| **Crawler** | discover · analyze · trend-scan · gap-report | `scripts/crawl-benchmark.mjs` (Node, native fetch, no deps). Honors robots.txt. 1 req/sec/host. UA `EssentialBaliBot/1.0`. |
-| **Scraper** | fetch · extract-article · read-inbox-xlsx · read-google-doc · geocode | `scripts/read-articles-xlsx.py` (openpyxl) and `scripts/read-google-doc.py` (Google Docs API via user OAuth, fallback service account) |
-| **Copywriter** | draft-article · rewrite-article · regenerate-title · persona-check | Gemini with persona prompts |
-| **Imager** | generate-hero · generate-inline · regenerate · alt-text | Imagen 3 |
-| **SEO** | keyword-research · optimize-meta · schema-markup · internal-link · competitor-gap | Gemini |
-| **Web Manager** | submit-article · upload-media · link-hero · submit-comment · toggle-hero-ad · fetch-status · list-pending-review | Payload REST + JWT (`/api/*`) |
+| **Elliot** (`workspace-main`) | plan-wave · dispatch-article · review-gate · status-report · maintenance-pass | Anthropic Haiku 4.5 (orchestration) + Vertex Gemini fallback |
+| **Crawler** | discover · analyze · trend-scan · gap-report | Node native fetch, robots.txt, 1 req/s/host, UA `EssentialBaliBot/1.0`. Per-site listing-page maps for all 4 benchmark sources. |
+| **Scraper** | read-articles-xlsx · pull-xlsx-from-drive · read-google-doc · check-doc-access · process-inbox · fetch · extract-article · extract-listing · extract-jsonld · geocode | Python venv (openpyxl, requests, bs4, googleapiclient) |
+| **Copywriter** | draft-article · rewrite-article · regenerate-title · persona-check | Vertex Gemini 2.5 Flash, response bound to JSON schema. 4 persona presets (maya / komang / putu / sari). Banned-phrase regex enforced in-script. |
+| **Imager** | generate-hero · generate-inline · regenerate · alt-text | Vertex Imagen 3 (`imagen-3.0-generate-002`). Per-area + per-topic + per-persona prompt cues. Auto-uploads to GCS via Payload media adapter. |
+| **SEO** | optimize-meta · keyword-research · schema-markup · internal-link · competitor-gap | Vertex Gemini 2.5 Flash. **Hosted as HTTP services by Payload** — single source of truth at `cms/src/lib/seo-agent.ts` and `cms/src/lib/competitor-gap.ts`. Same code path used by Articles `beforeChange` hook (in-process) and by Elliot dispatch (over HTTP via JWT). |
+| **Web Manager** | submit-article · upload-media · link-hero · submit-comment · toggle-hero-ad · fetch-status · list-pending-review | Payload REST + JWT (`elliot@gaiada.com`, role `ai-agent`) |
 
 ---
 
@@ -217,18 +248,39 @@ Branch model: **`main` only** (dev branch retired once cutover stabilized).
 ## Quick checks
 
 ```bash
-# Crawler discovery
+# Crawler — single-URL analyze
 node /opt/.openclaw-ess/workspace-crawler/scripts/crawl-benchmark.mjs \
-  --discover --site=thehoneycombers.com/bali --area=canggu --topic=dine
+  https://thehoneycombers.com/bali/best-warungs-canggu/
 
-# xlsx reader (latest in inbox)
-python3 /opt/.openclaw-ess/workspace-scraper/scripts/read-articles-xlsx.py | jq '.count'
+# Crawler — trend-scan one cell
+node /opt/.openclaw-ess/workspace-crawler/scripts/trend-scan.mjs \
+  --area=canggu --topic=dine --limit=8
 
-# Google Doc fetch (must be shared with ai@gaiada.com)
-python3 /opt/.openclaw-ess/workspace-scraper/scripts/read-google-doc.py \
-  "https://docs.google.com/document/d/<DOC_ID>/edit" | head -20
+# Crawler + Vertex — gap-report (themes benchmarks cover that we don't)
+node /opt/.openclaw-ess/workspace-crawler/scripts/gap-report.mjs \
+  --area=canggu --topic=dine
 
-# Payload connectivity (JWT login + /me from gda-ai01)
+# Elliot — see what plan-wave would dispatch (no side effects)
+node /opt/.openclaw-ess/workspace-main/scripts/plan-wave.mjs --limit=5
+
+# Elliot — fire 3 dispatches at 60s pacing
+node /opt/.openclaw-ess/workspace-main/scripts/plan-wave.mjs --execute --limit=3
+
+# Elliot — per-cell status (table)
+node /opt/.openclaw-ess/workspace-main/scripts/status-report.mjs --table
+
+# Elliot — review-gate one article
+node /opt/.openclaw-ess/workspace-main/scripts/review-gate.mjs --id=70
+
+# One-off article via dispatch
+echo '{"area":"ubud","topic":"health-wellness","persona":"komang",
+       "brief":"five quiet yoga studios in Ubud","target_words":600}' | \
+  node /opt/.openclaw-ess/workspace-main/scripts/dispatch-article.mjs
+
+# Scraper — refresh xlsx tracker from Drive + parse rows
+python3 /opt/.openclaw-ess/workspace-scraper/scripts/process-inbox.py --pull
+
+# Payload connectivity (JWT login + /me)
 source /opt/.openclaw-ess/credentials/.env.payload
 TOKEN=$(curl -s -X POST "$PAYLOAD_BASE_URL/api/users/login" \
   -H 'Content-Type: application/json' \
@@ -237,3 +289,28 @@ TOKEN=$(curl -s -X POST "$PAYLOAD_BASE_URL/api/users/login" \
 curl -s "$PAYLOAD_BASE_URL/api/users/me" -H "Authorization: JWT $TOKEN" | jq '.user.role'
 # → "ai-agent"
 ```
+
+---
+
+## Decisions log
+
+- **2026-04-29** — All 39 skills are now LIVE end-to-end. Last 3 to land
+  were Crawler `trend-scan`, Crawler `gap-report`, SEO `competitor-gap`.
+- **2026-04-29** — SEO logic moved from a workspace-seo Node script to an
+  HTTP service hosted by Payload (`/api/seo-optimize`, `/api/seo-competitor-gap`).
+  Single source of truth at `cms/src/lib/seo-agent.ts` — same code is called
+  in-process by the Articles `beforeChange` hook and over HTTP by Elliot's
+  dispatch chain.
+- **2026-04-29** — Imager `regenerate` available both as a workspace
+  script and as a Payload endpoint backing the admin "🔁 Regenerate hero"
+  button. Both paths share `cms/src/lib/imager-regenerate.ts`.
+- **2026-04-28** — Copywriter Vertex calls now bind to a JSON schema
+  (responseSchema), eliminating the unterminated-string parser glitch
+  that occasionally killed dispatches.
+- **2026-04-28** — `dispatch-article.mjs` now resolves `persona` slug →
+  Payload persona id before submit, so `Article.persona` lands as a
+  proper relationship object (was `null` before).
+- **Permanently dropped: pnpm workspace migration.** Considered, rejected.
+  Same reasoning as the essentialbali-side decisions log: PM2 cwd
+  assumptions, Payload v3 monorepo quirks, modest payoff for this
+  project's mixed-stack reality. Not revisiting.
