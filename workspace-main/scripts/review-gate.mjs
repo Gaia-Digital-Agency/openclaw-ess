@@ -40,6 +40,7 @@
  *   3 — usage / network error
  */
 import { readFileSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 for (const envPath of ["/opt/.openclaw-ess/credentials/.env.payload"]) {
@@ -202,6 +203,42 @@ async function main() {
     err("seo_meta_title_too_long", `meta_title is ${String(article.meta_title).length} chars (>60)`);
   if (article.meta_description && String(article.meta_description).length > 160)
     err("seo_meta_description_too_long", `meta_description is ${String(article.meta_description).length} chars (>160)`);
+
+  // Semantic gate — does the body actually read as the declared
+  // (area, topic)? Catches LLM drift that the brief + prompt couldn't
+  // prevent. Hard rule: predicted (area, topic) MUST equal declared
+  // (area, topic), or the article fails the gate.
+  if (article.body_markdown && article.area && article.topic) {
+    const probe = spawnSync("node", [
+      "/opt/.openclaw-ess/workspace-main/scripts/content-area-check.mjs",
+    ], {
+      input: JSON.stringify({
+        declared_area: article.area,
+        declared_topic: article.topic,
+        body_markdown: article.body_markdown,
+      }),
+      encoding: "utf-8",
+      timeout: 30000,
+    });
+    if (probe.status === 2) {
+      try {
+        const r = JSON.parse(probe.stdout);
+        err(
+          "area_topic_mismatch",
+          `semantic gate: declared ${r.declared.area}/${r.declared.topic} but body reads as ${r.predicted.area}/${r.predicted.topic} (confidence ${r.confidence}). ${r.why}`,
+        );
+      } catch {
+        err("area_topic_mismatch", "semantic gate failed (could not parse content-area-check output)");
+      }
+    } else if (probe.status !== 0) {
+      // Network / Vertex error — DON'T block the article on infra
+      // failures, surface as warning so ops sees it.
+      warn(
+        "area_topic_check_unavailable",
+        `content-area-check exited ${probe.status}: ${(probe.stderr || "").slice(0, 200).trim()}`,
+      );
+    }
+  }
 
   // Duplicate hash
   if (article.source_hash) {
