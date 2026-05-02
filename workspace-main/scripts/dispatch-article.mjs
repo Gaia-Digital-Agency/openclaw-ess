@@ -106,7 +106,7 @@ async function runJsonAgent(scriptPath, input, label) {
     proc.stdin.end();
     proc.on("close", (code) => {
       if (code !== 0) {
-        rejectP(new Error(`${label} exit ${code}: ${stderr.slice(0, 400)}`));
+        rejectP(new Error(`${label} exit ${code}: ${stderr.slice(-4000)}`));
         return;
       }
       try {

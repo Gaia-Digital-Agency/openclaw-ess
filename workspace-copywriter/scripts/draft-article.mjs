@@ -114,7 +114,7 @@ function buildPrompt({ area, topic, persona, brief, research, target_words }) {
     .join("\n");
 }
 
-async function callGemini(prompt) {
+async function callGemini(prompt, temperature = 0.5) {
   const auth = new GoogleAuth({
     keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
     scopes: ["https://www.googleapis.com/auth/cloud-platform"],
@@ -131,8 +131,8 @@ async function callGemini(prompt) {
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
-        temperature: 0.5,
-        maxOutputTokens: 4000,
+        temperature,
+        maxOutputTokens: 8000,
         responseMimeType: "application/json",
         // Schema forces Vertex to return well-formed JSON with these exact
         // fields. Eliminates the unterminated-string failures we saw when
@@ -213,38 +213,103 @@ async function main() {
   // attempt usually returns clean JSON because temperature=0.5 sampling
   // takes a different path. Saw this fail the first F7 user dispatch
   // ("dispatch failed: copywriter exit 1: Unterminated string in JSON").
+  // Repair an "Unterminated string in JSON at position N" failure by
+  // truncating to N, closing the open string, and closing any open
+  // brackets. Produces a valid (if shorter) JSON object — body_markdown
+  // gets clipped mid-sentence, which the editor can fix in admin.
+  // Better than failing the dispatch outright.
+  function tryRepair(raw) {
+    try {
+      JSON.parse(raw);
+      return null;
+    } catch (e) {
+      const msg = e?.message || "";
+      const m = msg.match(/position\s+(\d+)/i);
+      if (!m) return null;
+      const pos = Number(m[1]);
+      if (!Number.isFinite(pos) || pos < 50) return null;
+      let truncated = raw.slice(0, pos);
+      // Drop a trailing partial escape so we don't leave \u00 hanging.
+      truncated = truncated.replace(/\\u?[0-9a-fA-F]{0,3}$/, "");
+      truncated = truncated.replace(/\\$/, "");
+      // Close the open string with a quote.
+      let candidate = truncated + '"';
+      // Count unclosed { and [ — assume they need closing in reverse.
+      const opens = [];
+      let inStr = false;
+      let esc = false;
+      for (let i = 0; i < candidate.length; i++) {
+        const c = candidate[i];
+        if (esc) { esc = false; continue; }
+        if (c === "\\") { esc = true; continue; }
+        if (c === '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (c === "{") opens.push("}");
+        else if (c === "[") opens.push("]");
+        else if (c === "}" || c === "]") opens.pop();
+      }
+      while (opens.length) candidate += opens.pop();
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  // Vary temperature across attempts so a deterministically-bad sampling
+  // path on attempt 1 doesn't repeat on attempt 2. 0.5 is the default
+  // (matches what we used pre-retry); 0.2 is more conservative; 0.8 is
+  // more exploratory. At least one of the three usually clears.
+  const TEMPS = [0.5, 0.2, 0.8];
   let parsed;
-  let lastErr;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= TEMPS.length; attempt++) {
+    const temp = TEMPS[attempt - 1];
     let raw;
     try {
-      raw = await callGemini(prompt);
+      raw = await callGemini(prompt, temp);
     } catch (e) {
-      lastErr = e;
-      console.error(`[copywriter] attempt ${attempt}/3 vertex error: ${e?.message || e}`);
-      if (attempt < 3) continue;
+      console.error(
+        `[copywriter] attempt ${attempt}/${TEMPS.length} temp=${temp} vertex error: ${e?.message || e}`,
+      );
+      if (attempt < TEMPS.length) continue;
       throw e;
     }
+    // Direct parse.
     try {
       parsed = JSON.parse(raw);
-      if (attempt > 1) console.error(`[copywriter] succeeded on retry ${attempt}`);
+      if (attempt > 1) console.error(`[copywriter] OK on attempt ${attempt} temp=${temp}`);
       break;
-    } catch (e) {
-      lastErr = e;
-      // Strip code fences in case Gemini ignored responseMimeType.
-      try {
-        const cleaned = raw.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
-        parsed = JSON.parse(cleaned);
-        if (attempt > 1) console.error(`[copywriter] succeeded on retry ${attempt} (after fence-strip)`);
-        break;
-      } catch {
+    } catch {}
+    // Fence-strip parse.
+    try {
+      const cleaned = raw.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+      parsed = JSON.parse(cleaned);
+      if (attempt > 1) console.error(`[copywriter] OK on attempt ${attempt} temp=${temp} (fence-strip)`);
+      break;
+    } catch {}
+    // JSON-repair parse — only on the LAST attempt; we'd rather get a
+    // fresh roll than ship a half-truncated body if we still have retries.
+    if (attempt === TEMPS.length) {
+      const repaired = tryRepair(raw);
+      if (repaired) {
+        parsed = repaired;
         console.error(
-          `[copywriter] attempt ${attempt}/3 JSON.parse failed: ${(e?.message || e).toString().slice(0, 120)}; raw[0..160]=${raw.slice(0, 160).replace(/\n/g, " ")}`,
+          `[copywriter] OK on attempt ${attempt} temp=${temp} via JSON-repair (body truncated)`,
         );
-        if (attempt === 3) {
-          throw new Error(`copywriter: 3x JSON.parse failures, last: ${e?.message || e}`);
-        }
+        break;
       }
+    }
+    // Bare failure — log and either retry or give up.
+    let parseErr;
+    try { JSON.parse(raw); } catch (e) { parseErr = e; }
+    console.error(
+      `[copywriter] attempt ${attempt}/${TEMPS.length} temp=${temp} JSON.parse failed: ${(parseErr?.message || parseErr || "").toString().slice(0, 160)}; raw[0..200]=${raw.slice(0, 200).replace(/\n/g, " ")}`,
+    );
+    if (attempt === TEMPS.length) {
+      throw new Error(
+        `copywriter: ${TEMPS.length}x JSON.parse failures (incl. repair fallback), last: ${parseErr?.message || parseErr}`,
+      );
     }
   }
 
