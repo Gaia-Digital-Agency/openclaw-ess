@@ -217,8 +217,72 @@ function markdownToLexical(md) {
   };
 }
 
+/**
+ * Map snake_case event_details (operator-facing spec) → camelCase
+ * eventDetails (Payload field group). Only includes provided keys.
+ */
+function mapEventDetails(ed) {
+  if (!ed || typeof ed !== "object") return undefined;
+  const out = {};
+  if (ed.start_date) out.startDate = ed.start_date;
+  if (ed.end_date) out.endDate = ed.end_date;
+  if (ed.start_time) out.startTime = ed.start_time;
+  if (ed.end_time) out.endTime = ed.end_time;
+  if (ed.time_of_day) out.timeOfDay = ed.time_of_day;
+  if (ed.venue_name) out.venueName = ed.venue_name;
+  if (ed.venue_address) out.venueAddress = ed.venue_address;
+  if (ed.venue_lat != null) out.venueLat = Number(ed.venue_lat);
+  if (ed.venue_lng != null) out.venueLng = Number(ed.venue_lng);
+  if (ed.ticket_url) out.ticketUrl = ed.ticket_url;
+  if (ed.recurrence) out.recurrence = ed.recurrence;
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Resolve tag slugs to existing tag IDs. Creates a tag row for any
+ * slug that doesn't exist yet (so operators can introduce new tags
+ * inline via the chat without first hopping into admin).
+ */
+async function resolveTagIds(slugs) {
+  if (!Array.isArray(slugs) || slugs.length === 0) return [];
+  const ids = [];
+  for (const slug of slugs) {
+    if (!slug) continue;
+    // Look up existing.
+    const res = await payloadFetch(
+      `/api/tags?where[slug][equals]=${encodeURIComponent(slug)}&limit=1&depth=0`,
+    );
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const found = data?.docs?.[0];
+      if (found?.id) {
+        ids.push(found.id);
+        continue;
+      }
+    }
+    // Not found — create. Name = humanized slug.
+    const name = slug
+      .split("-")
+      .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+      .join(" ");
+    const create = await payloadFetch("/api/tags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, name }),
+    });
+    if (create.ok) {
+      const d = await create.json();
+      const id = (d?.doc || d)?.id;
+      if (id) ids.push(id);
+    }
+  }
+  return ids;
+}
+
 async function submitArticle({
   area, topic, areaId, topicId, personaId, copy, seo, heroId, sourceUrl, sourceHash,
+  // F10 — extended editorial controls
+  status, group, tagIds, publishedAt, eventDetails,
 }) {
   const body = markdownToLexical(copy.body_markdown);
   const payload = {
@@ -228,7 +292,7 @@ async function submitArticle({
     area: areaId,
     topic: topicId,
     ...(personaId ? { persona: personaId } : {}),
-    status: "pending_review",
+    status: status || "pending_review",
     body,
     hero: heroId || undefined,
     seo: {
@@ -243,7 +307,16 @@ async function submitArticle({
       site: copy.sources?.[0]?.site || null,
       hash: sourceHash,
     },
+    ...(group ? { group } : {}),
+    ...(tagIds && tagIds.length ? { tags: tagIds } : {}),
+    ...(publishedAt ? { publishedAt } : {}),
+    ...(eventDetails ? { eventDetails } : {}),
   };
+  // If status is published but publishedAt wasn't given, stamp now —
+  // matches the cms beforeChange auto-promotion behavior.
+  if (payload.status === "published" && !payload.publishedAt) {
+    payload.publishedAt = new Date().toISOString();
+  }
   const res = await payloadFetch("/api/articles", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -290,22 +363,34 @@ async function main() {
   const researchUrl = input.research_url || null;
   const skipImager = !!input.skip_imager;
   const targetWords = input.target_words ? Number(input.target_words) : null;
+  // F10 — extended editorial controls (all optional)
+  const reqStatus = input.status ? String(input.status) : null;
+  const reqGroup = input.group ? String(input.group) : null;
+  const reqTagSlugs = Array.isArray(input.tags) ? input.tags : [];
+  const reqPublishedAt = input.published_at ? String(input.published_at) : null;
+  const reqEventDetails = mapEventDetails(input.event_details);
+  const headlineStyle = input.headline_style ? String(input.headline_style) : null;
+  const forceRegenerate = !!input.force_regenerate;
 
   const sourceHash = hashOf(area, topic, brief, researchUrl);
   log(`hash ${sourceHash} ${area}/${topic} persona=${persona}`);
 
-  // 1. Hash lock check
-  const existing = await checkExisting(area, topic, sourceHash);
-  if (existing) {
-    log(`hash-locked by article id=${existing.id} status=${existing.status} — skipping`);
-    console.log(JSON.stringify({
-      status: "skipped_hash_locked",
-      hash: sourceHash,
-      area, topic,
-      existing_id: existing.id,
-      existing_status: existing.status,
-    }, null, 2));
-    process.exit(2);
+  // 1. Hash lock check (skip when force_regenerate=true)
+  if (!forceRegenerate) {
+    const existing = await checkExisting(area, topic, sourceHash);
+    if (existing) {
+      log(`hash-locked by article id=${existing.id} status=${existing.status} — skipping`);
+      console.log(JSON.stringify({
+        status: "skipped_hash_locked",
+        hash: sourceHash,
+        area, topic,
+        existing_id: existing.id,
+        existing_status: existing.status,
+      }, null, 2));
+      process.exit(2);
+    }
+  } else {
+    log(`force_regenerate=true → skipping hash-lock check`);
   }
 
   // 2. Resolve area/topic ids
@@ -322,13 +407,20 @@ async function main() {
     log(`persona slug "${persona}" not found in /api/personas — submitting with persona=null`);
   }
 
-  // 3. Copywriter
+  // 3. Copywriter — pass headline_style as a brief suffix when supplied
   log("copywriter…");
   let copy;
   try {
+    const briefForCopy = headlineStyle
+      ? `${brief}\n\nSTYLE DIRECTION: ${headlineStyle}`
+      : brief;
     copy = await runJsonAgent(
       COPYWRITER,
-      { area, topic, persona, brief, ...(targetWords ? { target_words: targetWords } : {}) },
+      {
+        area, topic, persona,
+        brief: briefForCopy,
+        ...(targetWords ? { target_words: targetWords } : {}),
+      },
       "copywriter",
     );
   } catch (e) {
@@ -401,7 +493,18 @@ async function main() {
     }
   }
 
-  // 6. Web Manager: submit
+  // 6. Resolve tag slugs (creates new tag rows for unknown slugs)
+  let tagIds = [];
+  if (reqTagSlugs.length) {
+    try {
+      tagIds = await resolveTagIds(reqTagSlugs);
+      log(`tags resolved: ${reqTagSlugs.join(", ")} → [${tagIds.join(", ")}]`);
+    } catch (e) {
+      log(`tag resolve failed (non-fatal): ${e.message}`);
+    }
+  }
+
+  // 7. Web Manager: submit (with all F10 editorial controls)
   log("submit-article…");
   let article;
   try {
@@ -410,6 +513,11 @@ async function main() {
       copy, seo, heroId,
       sourceUrl: researchUrl,
       sourceHash,
+      status: reqStatus,
+      group: reqGroup,
+      tagIds,
+      publishedAt: reqPublishedAt,
+      eventDetails: reqEventDetails,
     });
   } catch (e) {
     console.error(`[dispatch] submit failed: ${e.message}`);
