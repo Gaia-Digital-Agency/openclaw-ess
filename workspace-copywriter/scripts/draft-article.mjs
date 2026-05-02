@@ -207,14 +207,45 @@ async function main() {
     target_words: input.target_words ? Number(input.target_words) : null,
   });
 
-  const raw = await callGemini(prompt);
+  // Vertex/Gemini intermittently emits unterminated JSON strings even with
+  // responseSchema set — typically a malformed Unicode escape inside
+  // body_markdown that breaks at position ~600. Retry up to 3x; the next
+  // attempt usually returns clean JSON because temperature=0.5 sampling
+  // takes a different path. Saw this fail the first F7 user dispatch
+  // ("dispatch failed: copywriter exit 1: Unterminated string in JSON").
   let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    // Be lenient — Gemini sometimes wraps in code fences despite responseMimeType.
-    const cleaned = raw.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
-    parsed = JSON.parse(cleaned);
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let raw;
+    try {
+      raw = await callGemini(prompt);
+    } catch (e) {
+      lastErr = e;
+      console.error(`[copywriter] attempt ${attempt}/3 vertex error: ${e?.message || e}`);
+      if (attempt < 3) continue;
+      throw e;
+    }
+    try {
+      parsed = JSON.parse(raw);
+      if (attempt > 1) console.error(`[copywriter] succeeded on retry ${attempt}`);
+      break;
+    } catch (e) {
+      lastErr = e;
+      // Strip code fences in case Gemini ignored responseMimeType.
+      try {
+        const cleaned = raw.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+        parsed = JSON.parse(cleaned);
+        if (attempt > 1) console.error(`[copywriter] succeeded on retry ${attempt} (after fence-strip)`);
+        break;
+      } catch {
+        console.error(
+          `[copywriter] attempt ${attempt}/3 JSON.parse failed: ${(e?.message || e).toString().slice(0, 120)}; raw[0..160]=${raw.slice(0, 160).replace(/\n/g, " ")}`,
+        );
+        if (attempt === 3) {
+          throw new Error(`copywriter: 3x JSON.parse failures, last: ${e?.message || e}`);
+        }
+      }
+    }
   }
 
   const body = parsed.body_markdown || "";
